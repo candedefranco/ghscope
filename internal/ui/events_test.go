@@ -26,7 +26,7 @@ func drawn(city City, ev Event, frame int) map[[2]int]rune {
 	return out
 }
 
-func realCity() City { return NewCity(fakeUser(0).Contributions.Calendar, 106) }
+func realCity() City { return NewCity(fakeUser(0).Contributions.Calendar, 106, maxFloors) }
 
 // towerCity has a skyscraper between two short buildings.
 func towerCity() City {

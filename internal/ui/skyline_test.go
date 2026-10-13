@@ -25,7 +25,7 @@ func TestBuildingsMapWeeksToTheCity(t *testing.T) {
 		week("2026-01-04", 0, 0, 0, 0, 0, 0, 0),   // nothing: empty lot
 		week("2026-01-11", 10, 10, 0, 0, 0, 0, 0), // best week, 2 active days
 		week("2026-01-18", 1, 1, 1, 1, 1, 0, 0),   // small but steady: 5 active days
-	})
+	}, maxFloors)
 	if city[0].floors != 0 {
 		t.Errorf("an empty week should be an empty lot, got %d floors", city[0].floors)
 	}
@@ -71,8 +71,8 @@ func TestWindowsLightUpProgressively(t *testing.T) {
 func TestSkylineIsDeterministicAndFits(t *testing.T) {
 	cal := fakeUser(0).Contributions.Calendar
 	for _, width := range []int{20, 56, 106} {
-		a := Skyline(cal, width, 1, nil)
-		if a != Skyline(cal, width, 1, nil) {
+		a := Skyline(cal, width, maxFloors, 1, nil)
+		if a != Skyline(cal, width, maxFloors, 1, nil) {
 			t.Fatal("the same data should always draw the same city")
 		}
 		lines := strings.Split(a, "\n")
@@ -86,7 +86,7 @@ func TestSkylineIsDeterministicAndFits(t *testing.T) {
 }
 
 func TestSkylineShowsTheAntennaAndMoon(t *testing.T) {
-	out := Skyline(fakeUser(0).Contributions.Calendar, 106, 1, nil)
+	out := Skyline(fakeUser(0).Contributions.Calendar, 106, maxFloors, 1, nil)
 	for _, want := range []string{"•", "│", "●", "▔"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("skyline is missing %q", want)

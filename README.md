@@ -92,6 +92,7 @@ main.go ─▶ internal/github ─▶ one GraphQL request: profile, contribution
 
 - **One request.** Everything comes from a single GraphQL query, so the dashboard loads in about a second.
 - **Width-aware layout.** Two columns from 100 columns up, one column below. The heatmap keeps GitHub's spacing while at least 40 weeks fit, and drops the gaps to show more history on narrow terminals. A test checks that no line is ever wider than the terminal.
+- **Height-aware too.** In a short terminal the dashboard gives up room in order of what's missed least: a few rows of the repository list (it scrolls), some floors of the city, the blank lines between panels. In a wide terminal everything stays on screen down to about 30 rows.
 - **A stable city.** Which windows are lit, and the moment each one switches on during the intro, come from a hash of its position, so the same data always draws the same skyline.
 - **Animations as pure functions.** Each animation picks its details once (which rooftops, where in the sky), then draws any frame from just the frame number. That makes every frame testable: tests check, for example, that the hero never passes through a building and that nothing but the swinger draws inside one.
 - **No runaway timers.** Animation ticks carry a generation number that changes whenever the view does, so stale timers are ignored instead of stacking up.

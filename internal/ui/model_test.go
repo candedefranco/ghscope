@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/candedefranco/ghscope/internal/github"
 )
@@ -184,6 +185,26 @@ func TestModelPlaysAnimationOnDemand(t *testing.T) {
 	m, cmd = runFrames(t, m, 300)
 	if m.lastEvent != name || cmd == nil {
 		t.Errorf("after %s ends, the next one should be scheduled (lastEvent=%q)", name, m.lastEvent)
+	}
+}
+
+func TestModelFitsTheWindow(t *testing.T) {
+	m := loaded(t, fakeFetcher{user: fakeUser(12)})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 32})
+	m = next.(Model)
+	v := m.View().Content
+	if got := lipgloss.Height(v); got > 32 {
+		t.Errorf("view is %d rows tall in a 32-row window", got)
+	}
+	if !strings.Contains(v, "languages") || !strings.Contains(v, "q quit") {
+		t.Error("the languages panel and the key help should fit")
+	}
+	if m.layout.Floors >= maxFloors {
+		t.Errorf("the city should be lower in a short window, got %d floors", m.layout.Floors)
+	}
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 60})
+	if next.(Model).layout != FullLayout {
+		t.Error("a tall window should get the full layout back")
 	}
 }
 

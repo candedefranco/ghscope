@@ -26,22 +26,46 @@ const (
 	twoColumnMinWidth = 100
 	maxWidth          = 120
 	listRows          = 8
+	minListRows       = 3
+	helpLines         = 2 // a blank line and the key help under the dashboard
 )
+
+// Layout is how much room the city and the repository list get, so the whole
+// dashboard fits in the terminal's height.
+type Layout struct {
+	Floors   int  // height of the city's tallest building
+	ListRows int  // repositories shown at once
+	Compact  bool // no blank lines between panels
+}
+
+// FullLayout is the dashboard with no height limit.
+var FullLayout = Layout{Floors: maxFloors, ListRows: listRows}
 
 // Options control how the dashboard is drawn.
 type Options struct {
 	Mode   ViewMode
 	Lights float64 // skyline intro progress, 0..1
 	Anim   *Anim   // animation drawn over the skyline, if any
+	Layout Layout  // zero value means FullLayout
 }
 
 // Dashboard lays out the whole screen for a loaded user. It is a pure function
 // of its inputs, used both by the interactive view and by --once.
 func Dashboard(u *github.User, cursor, width int, now time.Time, opts Options) string {
+	if opts.Layout == (Layout{}) {
+		opts.Layout = FullLayout
+	}
 	width = min(width, maxWidth)
 	header := Header(u, width)
 	cal := u.Contributions.Calendar
-	contrib := Panel("contributions", Contributions(cal, Inner(width), opts.Mode, opts.Lights, opts.Anim), width)
+	contrib := Panel("contributions", Contributions(cal, Inner(width), opts), width)
+	rows := opts.Layout.ListRows
+	join := func(panels ...string) string {
+		if opts.Layout.Compact {
+			return strings.Join(panels, "\n")
+		}
+		return strings.Join(panels, "\n\n")
+	}
 
 	repos := u.Repositories.Nodes
 	if width >= twoColumnMinWidth {
@@ -49,13 +73,46 @@ func Dashboard(u *github.User, cursor, width int, now time.Time, opts Options) s
 		left := (width - gap) * 2 / 5
 		right := width - gap - left
 		langs := Panel("languages", Languages(repos, Inner(left)), left)
-		list := Panel("repositories", Repos(repos, cursor, listRows, Inner(right), now), right)
+		list := Panel("repositories", Repos(repos, cursor, rows, Inner(right), now), right)
 		bottom := lipgloss.JoinHorizontal(lipgloss.Top, langs, strings.Repeat(" ", gap), list)
-		return strings.Join([]string{header, "", contrib, "", bottom}, "\n")
+		return join(header, contrib, bottom)
 	}
 	langs := Panel("languages", Languages(repos, Inner(width)), width)
-	list := Panel("repositories", Repos(repos, cursor, listRows, Inner(width), now), width)
-	return strings.Join([]string{header, "", contrib, "", langs, "", list}, "\n")
+	list := Panel("repositories", Repos(repos, cursor, rows, Inner(width), now), width)
+	return join(header, contrib, langs, list)
+}
+
+// FitLayout finds the roomiest layout whose dashboard, plus the key help,
+// fits in height rows. It gives up room in order of what's missed least: a
+// few rows of the repository list (it scrolls), some floors of the city, the
+// blank lines between panels, then the rest. height <= 0 means no limit.
+func FitLayout(u *github.User, width, height int, mode ViewMode) Layout {
+	l := FullLayout
+	if height <= 0 {
+		return l
+	}
+	tall := func() bool {
+		d := Dashboard(u, 0, width, time.Time{}, Options{Mode: mode, Lights: 1, Layout: l})
+		return lipgloss.Height(d)+helpLines > height
+	}
+	city := mode == ViewSkyline
+	for tall() {
+		switch {
+		case l.ListRows > minListRows+1:
+			l.ListRows--
+		case city && l.Floors > minFloors+2:
+			l.Floors--
+		case !l.Compact:
+			l.Compact = true
+		case city && l.Floors > minFloors:
+			l.Floors--
+		case l.ListRows > minListRows:
+			l.ListRows--
+		default:
+			return l // as small as it gets; the terminal cuts off the rest
+		}
+	}
+	return l
 }
 
 type loadedMsg struct {
@@ -99,6 +156,8 @@ type Model struct {
 	loading bool
 	cursor  int
 	width   int
+	height  int
+	layout  Layout // fitted to width and height, see FitLayout
 	spin    spinner.Model
 	now     func() time.Time
 	mode    ViewMode
@@ -120,6 +179,7 @@ func New(f Fetcher, login string, mode ViewMode, animations bool) Model {
 		login:      login,
 		loading:    true,
 		width:      twoColumnMinWidth,
+		layout:     FullLayout,
 		spin:       spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(sGreen)),
 		now:        time.Now,
 	}
@@ -141,11 +201,16 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		if msg.Width != m.width {
+			m.anim = nil // the city changes shape under it
+		}
+		m.width, m.height = msg.Width, msg.Height
+		m = m.fitted()
 	case loadedMsg:
 		m.loading = false
 		m.user, m.err = msg.user, msg.err
 		m.cursor = 0
+		m = m.fitted()
 		if m.err == nil && m.mode == ViewSkyline {
 			return m.startCity()
 		}
@@ -212,10 +277,10 @@ func (m Model) onKey(key string) (tea.Model, tea.Cmd) {
 			m.mode = ViewHeatmap
 			m.gen++ // stop the intro and animations
 			m.anim = nil
-			return m, nil
+			return m.fitted(), nil
 		}
 		m.mode = ViewSkyline
-		return m.startCity() // replay the city lighting up
+		return m.fitted().startCity() // replay the city lighting up
 	case "a":
 		if m.mode == ViewSkyline && m.user != nil {
 			m.gen++ // cancel the pending timer and play one now
@@ -234,17 +299,31 @@ func (m Model) View() tea.View {
 	case m.err != nil:
 		content = "\n  " + sError.Render("error: ") + ErrorHint(m.err) + "\n\n  " + sMuted.Render("r retry · q quit")
 	default:
-		content = Dashboard(m.user, m.cursor, m.width, m.now(), Options{Mode: m.mode, Lights: m.lights, Anim: m.anim})
+		content = Dashboard(m.user, m.cursor, m.width, m.now(), Options{Mode: m.mode, Lights: m.lights, Anim: m.anim, Layout: m.layout})
 		help := "↑/↓ move · enter open repo · p profile · v city/grid · a animate · r refresh · q quit"
 		if m.loading {
 			help = m.spin.View() + " refreshing…"
 		}
-		content += "\n\n" + sMuted.Render(help)
+		content += "\n\n" + sMuted.Render(Truncate(help, m.width))
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.WindowTitle = "ghscope · @" + m.login
 	return v
+}
+
+// fitted recomputes the layout for the terminal size, view and data. A
+// running animation is dropped if the city changes height under it.
+func (m Model) fitted() Model {
+	if m.user == nil {
+		return m
+	}
+	l := FitLayout(m.user, m.width, m.height, m.mode)
+	if l.Floors != m.layout.Floors {
+		m.anim = nil
+	}
+	m.layout = l
+	return m
 }
 
 // startCity begins the lights-on intro from a dark city.
@@ -283,7 +362,7 @@ func (m Model) playEvent() (tea.Model, tea.Cmd) {
 	if m.user == nil || m.mode != ViewSkyline {
 		return m, nil
 	}
-	city := NewCity(m.user.Contributions.Calendar, Inner(min(m.width, maxWidth)))
+	city := NewCity(m.user.Contributions.Calendar, Inner(min(m.width, maxWidth)), m.layout.Floors)
 	ev := RandomEvent(city, m.rng, m.lastEvent)
 	if ev == nil {
 		return m, nil

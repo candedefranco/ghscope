@@ -69,6 +69,39 @@ func TestDashboardFitsTheTerminal(t *testing.T) {
 	}
 }
 
+func TestDashboardFitsTheTerminalHeight(t *testing.T) {
+	u := fakeUser(12)
+	full := lipgloss.Height(Dashboard(u, 0, 120, now, Options{Lights: 1})) + helpLines
+	if l := FitLayout(u, 120, 0, ViewSkyline); l != FullLayout {
+		t.Errorf("with no height limit the layout should be full, got %+v", l)
+	}
+	if l := FitLayout(u, 120, full, ViewSkyline); l != FullLayout {
+		t.Errorf("with room to spare the layout should be full, got %+v", l)
+	}
+	for _, mode := range []ViewMode{ViewSkyline, ViewHeatmap} {
+		for height := 30; height < full; height++ {
+			l := FitLayout(u, 120, height, mode)
+			out := Dashboard(u, 0, 120, now, Options{Mode: mode, Lights: 1, Layout: l})
+			if got := lipgloss.Height(out) + helpLines; got > height {
+				t.Errorf("mode %v, height %d: dashboard needs %d rows (%+v)", mode, height, got, l)
+			}
+			for _, want := range []string{"contributions", "languages", "repositories"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("mode %v, height %d: %q is missing", mode, height, want)
+				}
+			}
+		}
+	}
+	// The city gives up floors before the dashboard drops its spacing, and
+	// never goes below minFloors.
+	if l := FitLayout(u, 120, full-6, ViewSkyline); l.Compact || l.Floors == maxFloors {
+		t.Errorf("a little short: expected a lower city with spacing kept, got %+v", l)
+	}
+	if l := FitLayout(u, 120, 5, ViewSkyline); l.Floors != minFloors || l.ListRows != minListRows || !l.Compact {
+		t.Errorf("a tiny terminal should get the smallest layout, got %+v", l)
+	}
+}
+
 func TestDashboardShowsTheEssentials(t *testing.T) {
 	out := Dashboard(fakeUser(3), 1, 110, now, Options{Mode: ViewHeatmap})
 	for _, want := range []string{"Octo Cat", "@octo", "500", "contributions", "languages", "repositories", "› a-repository"} {

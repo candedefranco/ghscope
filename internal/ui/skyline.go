@@ -18,9 +18,10 @@ import (
 //   - its lit windows are how many days that week you were active,
 //   - your best week gets an antenna with a red light.
 const (
-	maxFloors   = 10
-	skyRows     = 3 // room above the tallest building for its antenna and the moon
-	buildingW   = 2 // one window plus a strip of wall
+	maxFloors   = 10 // the best week's height when the terminal has room
+	minFloors   = 4  // how far the city shrinks to fit a short terminal
+	skyRows     = 3  // room above the tallest building for its antenna and the moon
+	buildingW   = 2  // one window plus a strip of wall
 	starDensity = 0.035
 )
 
@@ -63,7 +64,7 @@ func weekTotals(w github.Week) (total, active int) {
 	return total, active
 }
 
-func buildings(weeks []github.Week) []building {
+func buildings(weeks []github.Week, floors int) []building {
 	maxTotal, tallest := 0, -1
 	for i, w := range weeks {
 		if t, _ := weekTotals(w); t > maxTotal {
@@ -78,7 +79,7 @@ func buildings(weeks []github.Week) []building {
 		}
 		share := float64(total) / float64(maxTotal)
 		out[i] = building{
-			floors:     max(1, int(math.Ceil(share*maxFloors))),
+			floors:     max(1, int(math.Ceil(share*float64(floors)))),
 			litShare:   float64(active) / 7,
 			bright:     share >= brightTopWeek,
 			hasAntenna: i == tallest,
@@ -103,13 +104,14 @@ type City struct {
 	Cols      int
 }
 
-// NewCity lays out the most recent weeks that fit in width.
-func NewCity(cal github.Calendar, width int) City {
+// NewCity lays out the most recent weeks that fit in width, with the best
+// week `floors` tall.
+func NewCity(cal github.Calendar, width, floors int) City {
 	weeks := cal.Weeks
 	if fit := width / buildingW; fit < len(weeks) {
 		weeks = weeks[max(0, len(weeks)-fit):]
 	}
-	return City{Weeks: weeks, Buildings: buildings(weeks), Rows: skyRows + maxFloors, Cols: len(weeks) * buildingW}
+	return City{Weeks: weeks, Buildings: buildings(weeks, floors), Rows: skyRows + floors, Cols: len(weeks) * buildingW}
 }
 
 // Roof returns the row of the top floor at column x, or Rows for an empty lot.
@@ -164,11 +166,11 @@ type Anim struct {
 }
 
 // Skyline renders the most recent weeks that fit in width as a city at night,
-// with month labels underneath. lights (0..1) is how far the "lights turning
+// floors tall at most, with month labels underneath. lights (0..1) is how far the "lights turning
 // on" intro has progressed; 1 shows the finished city. anim, if not nil, is
 // drawn on top.
-func Skyline(cal github.Calendar, width int, lights float64, anim *Anim) string {
-	city := NewCity(cal, width)
+func Skyline(cal github.Calendar, width, floors int, lights float64, anim *Anim) string {
+	city := NewCity(cal, width, floors)
 	cv := NewCanvas(city.Cols, city.Rows)
 	drawCity(cv, city, lights)
 	if anim != nil && anim.Event != nil {
