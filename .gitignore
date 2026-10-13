@@ -1,0 +1,4 @@
+/ghscope
+*.test
+*.out
+.DS_Store
