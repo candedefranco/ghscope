@@ -1,8 +1,21 @@
 # ghscope
 
-A GitHub dashboard for your terminal: contribution heatmap, streaks, top languages and recent repositories. Written in **Go** with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+A GitHub dashboard for your terminal that draws your year of contributions as **a city at night**. Also shows streaks, top languages and recent repositories. Written in **Go** with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
-![ghscope showing a contribution heatmap, a languages chart and a list of repositories](docs/screenshot.jpg)
+![ghscope drawing a year of contributions as a city skyline, next to a languages chart and a list of repositories](docs/skyline.jpg)
+
+## The city
+
+Every building is one week of your year:
+
+- **Height** is how much you contributed that week.
+- **Lit windows** are how many days that week you were active: a steady week glows, a one-day sprint is mostly dark.
+- **Your best week** gets an antenna with a red light.
+- Weeks with no contributions are empty lots.
+
+When the dashboard opens, the windows switch on one by one, like a city at dusk. Press `v` for GitHub's classic grid:
+
+![The same data as GitHub's contribution heatmap](docs/heatmap.jpg)
 
 ## Install
 
@@ -18,6 +31,7 @@ go install github.com/candedefranco/ghscope@latest
 ghscope              # you (the account your token belongs to)
 ghscope torvalds     # anyone else
 ghscope --once       # print the dashboard once, no interactive UI
+ghscope --view heatmap   # start on the classic grid instead of the city
 ```
 
 | Key | Action |
@@ -25,6 +39,7 @@ ghscope --once       # print the dashboard once, no interactive UI
 | `↑` `↓` / `k` `j` | Move through repositories |
 | `enter` / `o` | Open the selected repository in the browser |
 | `p` | Open the profile in the browser |
+| `v` | Switch between the city and the classic grid |
 | `g` / `G` | First / last repository |
 | `r` | Refresh |
 | `q` | Quit |
@@ -52,12 +67,14 @@ main.go ─▶ internal/github ─▶ one GraphQL request: profile, contribution
            internal/stats ─▶ streaks, active days, stars, language shares (pure functions)
               │
               ▼
-           internal/ui ─▶ render.go: heatmap, bars, panels (pure, width-aware)
-                          model.go:  Bubble Tea model (loading, keys, refresh, errors)
+           internal/ui ─▶ skyline.go: the city (pure, deterministic)
+                          render.go:  heatmap, bars, panels (pure, width-aware)
+                          model.go:   Bubble Tea model (loading, lights intro, keys, refresh)
 ```
 
 - **One request.** Everything comes from a single GraphQL query, so the dashboard loads in about a second.
 - **Width-aware layout.** Two columns from 100 columns up, one column below. The heatmap keeps GitHub's spacing while at least 40 weeks fit, and drops the gaps to show more history on narrow terminals. A test checks that no line is ever wider than the terminal.
+- **A stable city.** Which windows are lit, and the moment each one switches on during the intro, come from a hash of its position, so the same data always draws the same skyline.
 - **Pure rendering.** The drawing functions don't depend on Bubble Tea, so `--once` prints exactly what the interactive view shows, and the layout is unit-tested.
 
 ## Development
@@ -65,7 +82,7 @@ main.go ─▶ internal/github ─▶ one GraphQL request: profile, contribution
 ```bash
 go test ./...
 go vet ./...
-go run . --once
+go run . --once                         # colors are stripped when piped; CLICOLOR_FORCE=1 keeps them
 ```
 
 ## License
