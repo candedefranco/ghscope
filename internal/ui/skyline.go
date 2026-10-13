@@ -20,7 +20,7 @@ import (
 const (
 	maxFloors   = 10 // the best week's height when the terminal has room
 	minFloors   = 4  // how far the city shrinks to fit a short terminal
-	skyRows     = 4  // room above the tallest building for the antenna, the moon and the hero
+	skyRows     = 3  // room above the tallest building for its antenna and the moon
 	buildingW   = 2  // one window plus a strip of wall
 	starDensity = 0.035
 )
