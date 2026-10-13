@@ -61,7 +61,7 @@ func TestDashboardFitsTheTerminal(t *testing.T) {
 	u := fakeUser(20)
 	for _, width := range []int{60, 80, 99, 100, 110, 120, 200} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
-			got := maxLineWidth(Dashboard(u, 5, width, now))
+			got := maxLineWidth(Dashboard(u, 5, width, now, Options{Lights: 1}))
 			if limit := min(width, maxWidth); got > limit {
 				t.Errorf("widest line is %d cells, terminal is %d", got, limit)
 			}
@@ -70,7 +70,7 @@ func TestDashboardFitsTheTerminal(t *testing.T) {
 }
 
 func TestDashboardShowsTheEssentials(t *testing.T) {
-	out := Dashboard(fakeUser(3), 1, 110, now)
+	out := Dashboard(fakeUser(3), 1, 110, now, Options{Mode: ViewHeatmap})
 	for _, want := range []string{"Octo Cat", "@octo", "500", "contributions", "languages", "repositories", "› a-repository"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dashboard is missing %q", want)
@@ -79,7 +79,7 @@ func TestDashboardShowsTheEssentials(t *testing.T) {
 }
 
 func TestDashboardHandlesEmptyUsers(t *testing.T) {
-	out := Dashboard(&github.User{Login: "new"}, 0, 100, now)
+	out := Dashboard(&github.User{Login: "new"}, 0, 100, now, Options{Lights: 1})
 	for _, want := range []string{"@new", "no public repositories", "no code in public repositories"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dashboard is missing %q", want)

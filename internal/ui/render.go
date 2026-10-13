@@ -49,6 +49,30 @@ func level(count, max int) int {
 
 var monthNames = [...]string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
 
+// monthLabels returns a row with each month's name above the week where it
+// starts, skipping a label when it would overlap the previous one.
+func monthLabels(weeks []github.Week, cellW int) string {
+	row := []rune(strings.Repeat(" ", len(weeks)*cellW))
+	lastMonth, lastEnd := -1, -1
+	for i, w := range weeks {
+		if len(w.Days) == 0 {
+			continue
+		}
+		t, err := time.Parse("2006-01-02", w.Days[0].Date)
+		if err != nil {
+			continue
+		}
+		m := int(t.Month()) - 1
+		pos := i * cellW
+		if m != lastMonth && pos > lastEnd && pos+3 <= len(row) {
+			copy(row[pos:], []rune(monthNames[m]))
+			lastEnd = pos + 3
+		}
+		lastMonth = m
+	}
+	return string(row)
+}
+
 // minSpacedWeeks: below this many weeks, drop the gaps between cells to show more history.
 const minSpacedWeeks = 40
 
@@ -74,28 +98,8 @@ func Heatmap(cal github.Calendar, width int) string {
 		}
 	}
 
-	// Month labels where a new month starts
-	months := []rune(strings.Repeat(" ", len(weeks)*cw))
-	lastMonth, lastLabelEnd := -1, -1
-	for i, w := range weeks {
-		if len(w.Days) == 0 {
-			continue
-		}
-		t, err := time.Parse("2006-01-02", w.Days[0].Date)
-		if err != nil {
-			continue
-		}
-		m := int(t.Month()) - 1
-		pos := i * cw
-		if m != lastMonth && pos > lastLabelEnd && pos+3 <= len(months) {
-			copy(months[pos:], []rune(monthNames[m]))
-			lastLabelEnd = pos + 3
-		}
-		lastMonth = m
-	}
-
 	var b strings.Builder
-	b.WriteString(strings.Repeat(" ", labelW) + sMuted.Render(strings.TrimRight(string(months), " ")) + "\n")
+	b.WriteString(strings.Repeat(" ", labelW) + sMuted.Render(strings.TrimRight(monthLabels(weeks, cw), " ")) + "\n")
 	dayLabels := []string{"", "Mon", "", "Wed", "", "Fri", ""}
 	for wd := range 7 {
 		b.WriteString(sMuted.Render(fmt.Sprintf("%-*s", labelW, dayLabels[wd])))
@@ -214,8 +218,28 @@ func Panel(title, content string, outer int) string {
 	return sBlue.Render(" "+title) + "\n" + box.Render(content)
 }
 
-// Contributions is the heatmap with its summary line.
-func Contributions(cal github.Calendar, inner int) string {
+// ViewMode picks how contributions are drawn.
+type ViewMode int
+
+const (
+	ViewSkyline ViewMode = iota // the city at night (default)
+	ViewHeatmap                 // GitHub's classic grid
+)
+
+// ParseViewMode reads a --view flag value.
+func ParseViewMode(s string) (ViewMode, error) {
+	switch s {
+	case "skyline", "city":
+		return ViewSkyline, nil
+	case "heatmap", "grid":
+		return ViewHeatmap, nil
+	}
+	return 0, fmt.Errorf("unknown view %q (use skyline or heatmap)", s)
+}
+
+// Contributions is the skyline or heatmap with its summary line. lights is the
+// skyline intro's progress (0..1).
+func Contributions(cal github.Calendar, inner int, mode ViewMode, lights float64) string {
 	days := stats.Days(cal)
 	s := stats.ComputeStreaks(days)
 	unit := func(n int) string {
@@ -230,7 +254,14 @@ func Contributions(cal github.Calendar, inner int) string {
 		"longest " + sBold.Render(fmt.Sprint(s.Longest)) + " " + unit(s.Longest),
 		sBold.Render(fmt.Sprint(stats.ActiveDays(days))) + " active days",
 	}
-	return Heatmap(cal, inner) + "\n\n" + sMuted.Render(JoinWrapped(parts, " · ", inner))
+	graph := Heatmap(cal, inner)
+	if mode == ViewSkyline {
+		graph = Skyline(cal, inner, lights)
+		if best := bestWeekLabel(cal); best != "" {
+			parts = append(parts, best)
+		}
+	}
+	return graph + "\n\n" + sMuted.Render(JoinWrapped(parts, " · ", inner))
 }
 
 // JoinWrapped joins parts with sep, starting a new line instead of splitting
