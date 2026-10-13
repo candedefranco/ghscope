@@ -71,8 +71,8 @@ func TestWindowsLightUpProgressively(t *testing.T) {
 func TestSkylineIsDeterministicAndFits(t *testing.T) {
 	cal := fakeUser(0).Contributions.Calendar
 	for _, width := range []int{20, 56, 106} {
-		a := Skyline(cal, width, 1)
-		if a != Skyline(cal, width, 1) {
+		a := Skyline(cal, width, 1, nil)
+		if a != Skyline(cal, width, 1, nil) {
 			t.Fatal("the same data should always draw the same city")
 		}
 		lines := strings.Split(a, "\n")
@@ -86,7 +86,7 @@ func TestSkylineIsDeterministicAndFits(t *testing.T) {
 }
 
 func TestSkylineShowsTheAntennaAndMoon(t *testing.T) {
-	out := Skyline(fakeUser(0).Contributions.Calendar, 106, 1)
+	out := Skyline(fakeUser(0).Contributions.Calendar, 106, 1, nil)
 	for _, want := range []string{"•", "│", "●", "▔"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("skyline is missing %q", want)

@@ -94,54 +94,90 @@ func windowLit(week, floor int, b building, lights float64) bool {
 	return hash01(week, floor, 1) < b.litShare && hash01(week, floor, 2) <= lights
 }
 
-// Skyline renders the most recent weeks that fit in width as a city at night,
-// with month labels underneath. lights (0..1) is how far the "lights turning
-// on" intro has progressed; 1 shows the finished city.
-func Skyline(cal github.Calendar, width int, lights float64) string {
+// City is the skyline's geometry: which weeks are shown and how tall each
+// building is. Animations use it to find roofs to stand on and sky to fly in.
+type City struct {
+	Weeks     []github.Week
+	Buildings []building
+	Rows      int // sky + buildings, excluding the ground line
+	Cols      int
+}
+
+// NewCity lays out the most recent weeks that fit in width.
+func NewCity(cal github.Calendar, width int) City {
 	weeks := cal.Weeks
 	if fit := width / buildingW; fit < len(weeks) {
 		weeks = weeks[max(0, len(weeks)-fit):]
 	}
-	city := buildings(weeks)
-	rows := skyRows + maxFloors
-	moonCol := len(weeks) * 4 / 5
+	return City{Weeks: weeks, Buildings: buildings(weeks), Rows: skyRows + maxFloors, Cols: len(weeks) * buildingW}
+}
 
-	var b strings.Builder
-	for r := range rows {
-		for i, bd := range city {
-			top := rows - bd.floors // first row of this building
+// Roof returns the row of the top floor at column x, or Rows for an empty lot.
+func (c City) Roof(x int) int {
+	i := x / buildingW
+	if x < 0 || i >= len(c.Buildings) {
+		return c.Rows
+	}
+	return c.Rows - c.Buildings[i].floors
+}
+
+// BuildingX returns the window column of building i.
+func (c City) BuildingX(i int) int { return i * buildingW }
+
+// drawCity paints the buildings, antenna, moon and stars onto the canvas.
+func drawCity(cv *Canvas, city City, lights float64) {
+	moonCol := len(city.Buildings) * 4 / 5
+	for i, bd := range city.Buildings {
+		x := city.BuildingX(i)
+		top := city.Rows - bd.floors
+		for r := range city.Rows {
 			switch {
 			case r >= top && bd.floors > 0:
-				floor := rows - 1 - r
 				wall := lipgloss.Color(wallColors[i%2])
 				win := windowOff
-				if windowLit(i, floor, bd, lights) {
+				if windowLit(i, city.Rows-1-r, bd, lights) {
 					win = windowOn
 					if bd.bright {
 						win = windowBright
 					}
 				}
-				b.WriteString(lipgloss.NewStyle().Foreground(win).Background(wall).Render("▪") +
-					lipgloss.NewStyle().Background(wall).Render(" "))
+				cv.SetCell(x, r, '▪', win, wall)
+				cv.SetCell(x+1, r, ' ', nil, wall)
 			case bd.hasAntenna && r == top-1:
-				b.WriteString(lipgloss.NewStyle().Foreground(antennaColor).Render("│ "))
+				cv.Set(x, r, '│', antennaColor)
 			case bd.hasAntenna && r == top-2:
-				b.WriteString(lipgloss.NewStyle().Foreground(antennaLight).Render("•") + " ")
+				cv.Set(x, r, '•', antennaLight)
 			case r == 0 && i == moonCol:
-				b.WriteString(lipgloss.NewStyle().Foreground(moonColor).Render("●") + " ")
-			default:
+				cv.Set(x, r, '●', moonColor)
+			case hash01(i, r, 3) < starDensity*float64(city.Rows-r)/float64(city.Rows)*2:
 				// sky: a few stars, denser higher up
-				if hash01(i, r, 3) < starDensity*float64(rows-r)/float64(rows)*2 {
-					b.WriteString(lipgloss.NewStyle().Foreground(starColor).Render("·") + " ")
-				} else {
-					b.WriteString(strings.Repeat(" ", buildingW))
-				}
+				cv.Set(x, r, '·', starColor)
 			}
 		}
-		b.WriteString("\n")
 	}
-	b.WriteString(lipgloss.NewStyle().Foreground(groundColor).Render(strings.Repeat("▔", len(weeks)*buildingW)))
-	b.WriteString("\n" + sMuted.Render(strings.TrimRight(monthLabels(weeks, buildingW), " ")))
+}
+
+// Anim is an animation in progress over the skyline.
+type Anim struct {
+	Event Event
+	Frame int
+}
+
+// Skyline renders the most recent weeks that fit in width as a city at night,
+// with month labels underneath. lights (0..1) is how far the "lights turning
+// on" intro has progressed; 1 shows the finished city. anim, if not nil, is
+// drawn on top.
+func Skyline(cal github.Calendar, width int, lights float64, anim *Anim) string {
+	city := NewCity(cal, width)
+	cv := NewCanvas(city.Cols, city.Rows)
+	drawCity(cv, city, lights)
+	if anim != nil && anim.Event != nil {
+		anim.Event.Draw(cv, city, anim.Frame)
+	}
+	var b strings.Builder
+	b.WriteString(cv.Render() + "\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(groundColor).Render(strings.Repeat("▔", city.Cols)))
+	b.WriteString("\n" + sMuted.Render(strings.TrimRight(monthLabels(city.Weeks, buildingW), " ")))
 	return b.String()
 }
 

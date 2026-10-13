@@ -239,7 +239,7 @@ func ParseViewMode(s string) (ViewMode, error) {
 
 // Contributions is the skyline or heatmap with its summary line. lights is the
 // skyline intro's progress (0..1).
-func Contributions(cal github.Calendar, inner int, mode ViewMode, lights float64) string {
+func Contributions(cal github.Calendar, inner int, mode ViewMode, lights float64, anim *Anim) string {
 	days := stats.Days(cal)
 	s := stats.ComputeStreaks(days)
 	unit := func(n int) string {
@@ -256,7 +256,7 @@ func Contributions(cal github.Calendar, inner int, mode ViewMode, lights float64
 	}
 	graph := Heatmap(cal, inner)
 	if mode == ViewSkyline {
-		graph = Skyline(cal, inner, lights)
+		graph = Skyline(cal, inner, lights, anim)
 		if best := bestWeekLabel(cal); best != "" {
 			parts = append(parts, best)
 		}
