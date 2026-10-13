@@ -27,12 +27,19 @@ const (
 	listRows          = 8
 )
 
+// Options control how the dashboard is drawn.
+type Options struct {
+	Mode   ViewMode
+	Lights float64 // skyline intro progress, 0..1
+}
+
 // Dashboard lays out the whole screen for a loaded user. It is a pure function
 // of its inputs, used both by the interactive view and by --once.
-func Dashboard(u *github.User, cursor, width int, now time.Time) string {
+func Dashboard(u *github.User, cursor, width int, now time.Time, opts Options) string {
 	width = min(width, maxWidth)
 	header := Header(u, width)
-	contrib := Panel("contributions", Contributions(u.Contributions.Calendar, Inner(width)), width)
+	cal := u.Contributions.Calendar
+	contrib := Panel("contributions", Contributions(cal, Inner(width), opts.Mode, opts.Lights), width)
 
 	repos := u.Repositories.Nodes
 	if width >= twoColumnMinWidth {
@@ -54,6 +61,19 @@ type loadedMsg struct {
 	err  error
 }
 
+// lightsMsg advances the skyline's "lights turning on" intro.
+type lightsMsg struct{}
+
+const (
+	lightsDuration = 1600 * time.Millisecond
+	lightsFrame    = 40 * time.Millisecond
+	lightsStep     = float64(lightsFrame) / float64(lightsDuration)
+)
+
+func lightsTick() tea.Cmd {
+	return tea.Tick(lightsFrame, func(time.Time) tea.Msg { return lightsMsg{} })
+}
+
 // Model is the interactive dashboard.
 type Model struct {
 	fetcher Fetcher
@@ -65,10 +85,13 @@ type Model struct {
 	width   int
 	spin    spinner.Model
 	now     func() time.Time
+	mode    ViewMode
+	lights  float64
 }
 
-func New(f Fetcher, login string) Model {
+func New(f Fetcher, login string, mode ViewMode) Model {
 	return Model{
+		mode:    mode,
 		fetcher: f,
 		login:   login,
 		loading: true,
@@ -99,6 +122,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.user, m.err = msg.user, msg.err
 		m.cursor = 0
+		if m.err == nil && m.mode == ViewSkyline {
+			m.lights = 0
+			return m, lightsTick()
+		}
+		m.lights = 1
+	case lightsMsg:
+		if m.lights >= 1 {
+			return m, nil
+		}
+		m.lights = min(1, m.lights+lightsStep)
+		return m, lightsTick()
 	case spinner.TickMsg:
 		if !m.loading {
 			return m, nil
@@ -146,6 +180,14 @@ func (m Model) onKey(key string) (tea.Model, tea.Cmd) {
 		if m.user != nil {
 			openBrowser(m.user.URL)
 		}
+	case "v":
+		if m.mode == ViewSkyline {
+			m.mode = ViewHeatmap
+			return m, nil
+		}
+		m.mode = ViewSkyline
+		m.lights = 0 // replay the city lighting up
+		return m, lightsTick()
 	}
 	return m, nil
 }
@@ -158,8 +200,8 @@ func (m Model) View() tea.View {
 	case m.err != nil:
 		content = "\n  " + sError.Render("error: ") + ErrorHint(m.err) + "\n\n  " + sMuted.Render("r retry · q quit")
 	default:
-		content = Dashboard(m.user, m.cursor, m.width, m.now())
-		help := "↑/↓ move · enter open repo · p open profile · r refresh · q quit"
+		content = Dashboard(m.user, m.cursor, m.width, m.now(), Options{Mode: m.mode, Lights: m.lights})
+		help := "↑/↓ move · enter open repo · p profile · v city/grid · r refresh · q quit"
 		if m.loading {
 			help = m.spin.View() + " refreshing…"
 		}

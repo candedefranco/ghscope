@@ -32,7 +32,7 @@ func key(s string) tea.KeyPressMsg {
 // loaded runs the model's fetch command and feeds the result back in.
 func loaded(t *testing.T, f fakeFetcher) Model {
 	t.Helper()
-	m := New(f, "octo")
+	m := New(f, "octo", ViewSkyline)
 	m.now = func() time.Time { return now }
 	next, _ := m.Update(m.load()())
 	return next.(Model)
@@ -47,7 +47,7 @@ func press(m Model, keys ...string) Model {
 }
 
 func TestModelShowsLoadingThenDashboard(t *testing.T) {
-	m := New(fakeFetcher{user: fakeUser(3)}, "octo")
+	m := New(fakeFetcher{user: fakeUser(3)}, "octo", ViewSkyline)
 	if v := m.View().Content; !strings.Contains(v, "fetching @octo") {
 		t.Errorf("loading view = %q", v)
 	}
@@ -113,5 +113,40 @@ func TestModelRefreshes(t *testing.T) {
 	}
 	if v := m.View().Content; !strings.Contains(v, "refreshing") || !strings.Contains(v, "Octo Cat") {
 		t.Error("while refreshing, the old dashboard should stay visible")
+	}
+}
+
+func TestModelLightsTheCityAndToggles(t *testing.T) {
+	m := New(fakeFetcher{user: fakeUser(2)}, "octo", ViewSkyline)
+	next, cmd := m.Update(m.load()())
+	m = next.(Model)
+	if m.lights != 0 || cmd == nil {
+		t.Fatal("loading the skyline should start the lights intro")
+	}
+	for range 100 {
+		next, cmd = m.Update(lightsMsg{})
+		m = next.(Model)
+		if cmd == nil {
+			break
+		}
+	}
+	if m.lights != 1 {
+		t.Errorf("lights = %v after the intro, want 1", m.lights)
+	}
+	if m = press(m, "v"); m.mode != ViewHeatmap {
+		t.Error("v should switch to the heatmap")
+	}
+	next, cmd = m.Update(key("v"))
+	m = next.(Model)
+	if m.mode != ViewSkyline || m.lights != 0 || cmd == nil {
+		t.Error("switching back to the city should replay the lights")
+	}
+}
+
+func TestModelHeatmapNeedsNoIntro(t *testing.T) {
+	m := New(fakeFetcher{user: fakeUser(1)}, "octo", ViewHeatmap)
+	next, _ := m.Update(m.load()())
+	if next.(Model).lights != 1 {
+		t.Error("the heatmap has no intro, so the lights should be fully on")
 	}
 }

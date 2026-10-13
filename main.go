@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/candedefranco/ghscope/internal/github"
 	"github.com/candedefranco/ghscope/internal/ui"
@@ -28,6 +29,7 @@ func main() {
 func run() error {
 	once := flag.Bool("once", false, "print the dashboard once and exit (no interactive UI)")
 	width := flag.Int("width", 110, "layout width for --once")
+	viewFlag := flag.String("view", "skyline", "how to draw contributions: skyline or heatmap")
 	showVersion := flag.Bool("version", false, "print the version")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: ghscope [flags] [username]\n\n"+
@@ -44,6 +46,11 @@ func run() error {
 	if flag.NArg() > 1 {
 		flag.Usage()
 		os.Exit(2)
+	}
+
+	mode, err := ui.ParseViewMode(*viewFlag)
+	if err != nil {
+		return err
 	}
 
 	ctx := context.Background()
@@ -69,10 +76,11 @@ func run() error {
 		if err != nil {
 			return errors.New(ui.ErrorHint(err))
 		}
-		fmt.Println(ui.Dashboard(u, 0, *width, time.Now()))
-		return nil
+		// lipgloss.Println adapts colors to the terminal (and strips them when piped)
+		_, err = lipgloss.Println(ui.Dashboard(u, 0, *width, time.Now(), ui.Options{Mode: mode, Lights: 1}))
+		return err
 	}
 
-	_, err = tea.NewProgram(ui.New(client, login)).Run()
+	_, err = tea.NewProgram(ui.New(client, login, mode)).Run()
 	return err
 }
