@@ -1,0 +1,73 @@
+# ghscope
+
+A GitHub dashboard for your terminal: contribution heatmap, streaks, top languages and recent repositories. Written in **Go** with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+
+![ghscope showing a contribution heatmap, a languages chart and a list of repositories](docs/screenshot.jpg)
+
+## Install
+
+Requires Go 1.26+.
+
+```bash
+go install github.com/candedefranco/ghscope@latest
+```
+
+## Usage
+
+```bash
+ghscope              # you (the account your token belongs to)
+ghscope torvalds     # anyone else
+ghscope --once       # print the dashboard once, no interactive UI
+```
+
+| Key | Action |
+|:--:|:--|
+| `↑` `↓` / `k` `j` | Move through repositories |
+| `enter` / `o` | Open the selected repository in the browser |
+| `p` | Open the profile in the browser |
+| `g` / `G` | First / last repository |
+| `r` | Refresh |
+| `q` | Quit |
+
+### Token
+
+The GitHub GraphQL API needs a token, even for public data. ghscope looks for one in this order:
+
+1. `GITHUB_TOKEN`
+2. `GH_TOKEN`
+3. The [GitHub CLI](https://cli.github.com): `gh auth token` (just run `gh auth login` once)
+
+A token with no extra scopes is enough.
+
+### Privacy
+
+ghscope only ever lists **public** repositories (`privacy: PUBLIC` in the query), even when your token can see private ones, so screenshots never leak private projects. Contribution counts are whatever GitHub shows on the profile.
+
+## How it works
+
+```text
+main.go ─▶ internal/github ─▶ one GraphQL request: profile, contribution calendar, 100 public repos
+              │
+              ▼
+           internal/stats ─▶ streaks, active days, stars, language shares (pure functions)
+              │
+              ▼
+           internal/ui ─▶ render.go: heatmap, bars, panels (pure, width-aware)
+                          model.go:  Bubble Tea model (loading, keys, refresh, errors)
+```
+
+- **One request.** Everything comes from a single GraphQL query, so the dashboard loads in about a second.
+- **Width-aware layout.** Two columns from 100 columns up, one column below. The heatmap keeps GitHub's spacing while at least 40 weeks fit, and drops the gaps to show more history on narrow terminals. A test checks that no line is ever wider than the terminal.
+- **Pure rendering.** The drawing functions don't depend on Bubble Tea, so `--once` prints exactly what the interactive view shows, and the layout is unit-tested.
+
+## Development
+
+```bash
+go test ./...
+go vet ./...
+go run . --once
+```
+
+## License
+
+[MIT](LICENSE)
