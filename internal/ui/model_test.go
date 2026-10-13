@@ -32,7 +32,7 @@ func key(s string) tea.KeyPressMsg {
 // loaded runs the model's fetch command and feeds the result back in.
 func loaded(t *testing.T, f fakeFetcher) Model {
 	t.Helper()
-	m := New(f, "octo", ViewSkyline)
+	m := New(f, "octo", ViewSkyline, true)
 	m.now = func() time.Time { return now }
 	next, _ := m.Update(m.load()())
 	return next.(Model)
@@ -47,7 +47,7 @@ func press(m Model, keys ...string) Model {
 }
 
 func TestModelShowsLoadingThenDashboard(t *testing.T) {
-	m := New(fakeFetcher{user: fakeUser(3)}, "octo", ViewSkyline)
+	m := New(fakeFetcher{user: fakeUser(3)}, "octo", ViewSkyline, true)
 	if v := m.View().Content; !strings.Contains(v, "fetching @octo") {
 		t.Errorf("loading view = %q", v)
 	}
@@ -117,16 +117,16 @@ func TestModelRefreshes(t *testing.T) {
 }
 
 func TestModelLightsTheCityAndToggles(t *testing.T) {
-	m := New(fakeFetcher{user: fakeUser(2)}, "octo", ViewSkyline)
+	m := New(fakeFetcher{user: fakeUser(2)}, "octo", ViewSkyline, true)
 	next, cmd := m.Update(m.load()())
 	m = next.(Model)
 	if m.lights != 0 || cmd == nil {
 		t.Fatal("loading the skyline should start the lights intro")
 	}
 	for range 100 {
-		next, cmd = m.Update(lightsMsg{})
+		next, cmd = m.Update(frameMsg{m.gen})
 		m = next.(Model)
-		if cmd == nil {
+		if m.lights >= 1 {
 			break
 		}
 	}
@@ -144,9 +144,89 @@ func TestModelLightsTheCityAndToggles(t *testing.T) {
 }
 
 func TestModelHeatmapNeedsNoIntro(t *testing.T) {
-	m := New(fakeFetcher{user: fakeUser(1)}, "octo", ViewHeatmap)
+	m := New(fakeFetcher{user: fakeUser(1)}, "octo", ViewHeatmap, true)
 	next, _ := m.Update(m.load()())
 	if next.(Model).lights != 1 {
 		t.Error("the heatmap has no intro, so the lights should be fully on")
+	}
+}
+
+// runFrames feeds frame ticks until the model stops asking for them.
+func runFrames(t *testing.T, m Model, limit int) (Model, tea.Cmd) {
+	t.Helper()
+	var cmd tea.Cmd
+	for range limit {
+		var next tea.Model
+		next, cmd = m.Update(frameMsg{m.gen})
+		m = next.(Model)
+		if m.lights >= 1 && m.anim == nil {
+			return m, cmd
+		}
+	}
+	t.Fatalf("still animating after %d frames", limit)
+	return m, nil
+}
+
+func TestModelPlaysAnimationOnDemand(t *testing.T) {
+	m := New(fakeFetcher{user: fakeUser(3)}, "octo", ViewSkyline, true)
+	m.width = 110
+	next, _ := m.Update(m.load()())
+	m, _ = runFrames(t, next.(Model), 100) // the lights intro
+	next, cmd := m.Update(key("a"))
+	m = next.(Model)
+	if m.anim == nil || cmd == nil {
+		t.Fatal("a should start an animation right away")
+	}
+	name := m.anim.Event.Name()
+	if v := m.View().Content; v == "" {
+		t.Error("view should render while animating")
+	}
+	m, cmd = runFrames(t, m, 300)
+	if m.lastEvent != name || cmd == nil {
+		t.Errorf("after %s ends, the next one should be scheduled (lastEvent=%q)", name, m.lastEvent)
+	}
+}
+
+func TestModelIgnoresStaleTimers(t *testing.T) {
+	m := New(fakeFetcher{user: fakeUser(3)}, "octo", ViewSkyline, true)
+	next, _ := m.Update(m.load()())
+	m = next.(Model)
+	stale := m.gen
+	m = press(m, "v", "v") // to the grid and back: a new generation
+	before := m.lights
+	next, cmd := m.Update(frameMsg{stale})
+	if next.(Model).lights != before || cmd != nil {
+		t.Error("a frame from an old generation must be ignored")
+	}
+	if _, cmd := m.Update(idleMsg{stale}); cmd != nil {
+		t.Error("an idle timer from an old generation must be ignored")
+	}
+}
+
+func TestModelGridStopsAnimations(t *testing.T) {
+	m := New(fakeFetcher{user: fakeUser(3)}, "octo", ViewSkyline, true)
+	m.width = 110
+	next, _ := m.Update(m.load()())
+	m = press(next.(Model), "a")
+	if m.anim == nil {
+		t.Fatal("expected an animation")
+	}
+	if m = press(m, "v"); m.anim != nil {
+		t.Error("switching to the grid should stop the animation")
+	}
+	if m = press(m, "a"); m.anim != nil {
+		t.Error("a does nothing on the grid")
+	}
+}
+
+func TestModelWithoutAnimationsStaysStill(t *testing.T) {
+	m := New(fakeFetcher{user: fakeUser(3)}, "octo", ViewSkyline, false)
+	next, _ := m.Update(m.load()())
+	m, cmd := runFrames(t, next.(Model), 100)
+	if cmd != nil {
+		t.Error("with animations off, nothing should be scheduled after the intro")
+	}
+	if m.anim != nil {
+		t.Error("no animation should be playing")
 	}
 }

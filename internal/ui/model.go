@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -31,6 +32,7 @@ const (
 type Options struct {
 	Mode   ViewMode
 	Lights float64 // skyline intro progress, 0..1
+	Anim   *Anim   // animation drawn over the skyline, if any
 }
 
 // Dashboard lays out the whole screen for a loaded user. It is a pure function
@@ -39,7 +41,7 @@ func Dashboard(u *github.User, cursor, width int, now time.Time, opts Options) s
 	width = min(width, maxWidth)
 	header := Header(u, width)
 	cal := u.Contributions.Calendar
-	contrib := Panel("contributions", Contributions(cal, Inner(width), opts.Mode, opts.Lights), width)
+	contrib := Panel("contributions", Contributions(cal, Inner(width), opts.Mode, opts.Lights, opts.Anim), width)
 
 	repos := u.Repositories.Nodes
 	if width >= twoColumnMinWidth {
@@ -61,17 +63,31 @@ type loadedMsg struct {
 	err  error
 }
 
-// lightsMsg advances the skyline's "lights turning on" intro.
-type lightsMsg struct{}
-
-const (
-	lightsDuration = 1600 * time.Millisecond
-	lightsFrame    = 40 * time.Millisecond
-	lightsStep     = float64(lightsFrame) / float64(lightsDuration)
+// frameMsg advances the lights intro or the running animation by one frame.
+// idleMsg means it's time to start the next random animation. Both carry the
+// generation they were scheduled in: any change of view bumps the generation,
+// so stale timers are ignored instead of stacking up and speeding things up.
+type (
+	frameMsg struct{ gen int }
+	idleMsg  struct{ gen int }
 )
 
-func lightsTick() tea.Cmd {
-	return tea.Tick(lightsFrame, func(time.Time) tea.Msg { return lightsMsg{} })
+const (
+	frameEvery     = 50 * time.Millisecond
+	lightsDuration = 1600 * time.Millisecond
+	lightsStep     = float64(frameEvery) / float64(lightsDuration)
+	minIdle        = 3 * time.Second
+	maxIdle        = 8 * time.Second
+)
+
+func frameTick(gen int) tea.Cmd {
+	return tea.Tick(frameEvery, func(time.Time) tea.Msg { return frameMsg{gen} })
+}
+
+func (m Model) idleTick() tea.Cmd {
+	wait := minIdle + time.Duration(m.rng.Int64N(int64(maxIdle-minIdle)))
+	gen := m.gen
+	return tea.Tick(wait, func(time.Time) tea.Msg { return idleMsg{gen} })
 }
 
 // Model is the interactive dashboard.
@@ -87,17 +103,25 @@ type Model struct {
 	now     func() time.Time
 	mode    ViewMode
 	lights  float64
+
+	animations bool   // play random animations over the skyline
+	anim       *Anim  // the animation playing now, if any
+	lastEvent  string // so the same one doesn't play twice in a row
+	gen        int    // see frameMsg
+	rng        *rand.Rand
 }
 
-func New(f Fetcher, login string, mode ViewMode) Model {
+func New(f Fetcher, login string, mode ViewMode, animations bool) Model {
 	return Model{
-		mode:    mode,
-		fetcher: f,
-		login:   login,
-		loading: true,
-		width:   twoColumnMinWidth,
-		spin:    spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(sGreen)),
-		now:     time.Now,
+		mode:       mode,
+		animations: animations,
+		rng:        rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)),
+		fetcher:    f,
+		login:      login,
+		loading:    true,
+		width:      twoColumnMinWidth,
+		spin:       spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(sGreen)),
+		now:        time.Now,
 	}
 }
 
@@ -123,16 +147,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.user, m.err = msg.user, msg.err
 		m.cursor = 0
 		if m.err == nil && m.mode == ViewSkyline {
-			m.lights = 0
-			return m, lightsTick()
+			return m.startCity()
 		}
 		m.lights = 1
-	case lightsMsg:
-		if m.lights >= 1 {
+	case frameMsg:
+		if msg.gen != m.gen {
 			return m, nil
 		}
-		m.lights = min(1, m.lights+lightsStep)
-		return m, lightsTick()
+		return m.nextFrame()
+	case idleMsg:
+		if msg.gen != m.gen || m.anim != nil {
+			return m, nil
+		}
+		return m.playEvent()
 	case spinner.TickMsg:
 		if !m.loading {
 			return m, nil
@@ -183,11 +210,18 @@ func (m Model) onKey(key string) (tea.Model, tea.Cmd) {
 	case "v":
 		if m.mode == ViewSkyline {
 			m.mode = ViewHeatmap
+			m.gen++ // stop the intro and animations
+			m.anim = nil
 			return m, nil
 		}
 		m.mode = ViewSkyline
-		m.lights = 0 // replay the city lighting up
-		return m, lightsTick()
+		return m.startCity() // replay the city lighting up
+	case "a":
+		if m.mode == ViewSkyline && m.user != nil {
+			m.gen++ // cancel the pending timer and play one now
+			m.lights = 1
+			return m.playEvent()
+		}
 	}
 	return m, nil
 }
@@ -200,8 +234,8 @@ func (m Model) View() tea.View {
 	case m.err != nil:
 		content = "\n  " + sError.Render("error: ") + ErrorHint(m.err) + "\n\n  " + sMuted.Render("r retry · q quit")
 	default:
-		content = Dashboard(m.user, m.cursor, m.width, m.now(), Options{Mode: m.mode, Lights: m.lights})
-		help := "↑/↓ move · enter open repo · p profile · v city/grid · r refresh · q quit"
+		content = Dashboard(m.user, m.cursor, m.width, m.now(), Options{Mode: m.mode, Lights: m.lights, Anim: m.anim})
+		help := "↑/↓ move · enter open repo · p profile · v city/grid · a animate · r refresh · q quit"
 		if m.loading {
 			help = m.spin.View() + " refreshing…"
 		}
@@ -211,6 +245,51 @@ func (m Model) View() tea.View {
 	v.AltScreen = true
 	v.WindowTitle = "ghscope · @" + m.login
 	return v
+}
+
+// startCity begins the lights-on intro from a dark city.
+func (m Model) startCity() (tea.Model, tea.Cmd) {
+	m.gen++
+	m.lights = 0
+	m.anim = nil
+	return m, frameTick(m.gen)
+}
+
+// nextFrame advances the intro, then the current animation, then waits.
+func (m Model) nextFrame() (tea.Model, tea.Cmd) {
+	switch {
+	case m.lights < 1:
+		m.lights = min(1, m.lights+lightsStep)
+		if m.lights < 1 {
+			return m, frameTick(m.gen)
+		}
+	case m.anim != nil:
+		next := &Anim{Event: m.anim.Event, Frame: m.anim.Frame + 1}
+		if next.Frame < next.Event.Frames() {
+			m.anim = next
+			return m, frameTick(m.gen)
+		}
+		m.lastEvent = m.anim.Event.Name()
+		m.anim = nil
+	}
+	if !m.animations {
+		return m, nil
+	}
+	return m, m.idleTick()
+}
+
+// playEvent starts a random animation that fits the current city.
+func (m Model) playEvent() (tea.Model, tea.Cmd) {
+	if m.user == nil || m.mode != ViewSkyline {
+		return m, nil
+	}
+	city := NewCity(m.user.Contributions.Calendar, Inner(min(m.width, maxWidth)))
+	ev := RandomEvent(city, m.rng, m.lastEvent)
+	if ev == nil {
+		return m, nil
+	}
+	m.anim = &Anim{Event: ev}
+	return m, frameTick(m.gen)
 }
 
 // ErrorHint turns errors into a message that says what to do next.

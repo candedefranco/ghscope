@@ -30,6 +30,7 @@ func run() error {
 	once := flag.Bool("once", false, "print the dashboard once and exit (no interactive UI)")
 	width := flag.Int("width", 110, "layout width for --once")
 	viewFlag := flag.String("view", "skyline", "how to draw contributions: skyline or heatmap")
+	noAnim := flag.Bool("no-anim", false, "don't play random animations over the skyline")
 	showVersion := flag.Bool("version", false, "print the version")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: ghscope [flags] [username]\n\n"+
@@ -81,6 +82,6 @@ func run() error {
 		return err
 	}
 
-	_, err = tea.NewProgram(ui.New(client, login, mode)).Run()
+	_, err = tea.NewProgram(ui.New(client, login, mode, !*noAnim)).Run()
 	return err
 }
