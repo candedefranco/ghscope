@@ -13,7 +13,21 @@ Every building is one week of your year:
 - **Your best week** gets an antenna with a red light.
 - Weeks with no contributions are empty lots.
 
-When the dashboard opens, the windows switch on one by one, like a city at dusk. Press `v` for GitHub's classic grid:
+When the dashboard opens, the windows switch on one by one, like a city at dusk.
+
+### Night life
+
+Every few seconds something happens over the city, picked at random (never the same twice in a row):
+
+| | |
+|:--|:--|
+| 🦸 **Caped hero** | jumps from one rooftop to another, arcing over anything taller in between |
+| 🕸️ **Web swinger** | swings across the skyline from line to line |
+| 🌠 **Shooting star** | streaks across the sky and burns out against the buildings |
+| 🛸 **UFO** | crosses the sky and beams a building |
+| 🎆 **Fireworks** | go off over your best week |
+
+Press `a` to play one right away, or start with `--no-anim` for a still city. Press `v` for GitHub's classic grid:
 
 ![The same data as GitHub's contribution heatmap](docs/heatmap.jpg)
 
@@ -32,6 +46,7 @@ ghscope              # you (the account your token belongs to)
 ghscope torvalds     # anyone else
 ghscope --once       # print the dashboard once, no interactive UI
 ghscope --view heatmap   # start on the classic grid instead of the city
+ghscope --no-anim        # no random animations over the city
 ```
 
 | Key | Action |
@@ -40,6 +55,7 @@ ghscope --view heatmap   # start on the classic grid instead of the city
 | `enter` / `o` | Open the selected repository in the browser |
 | `p` | Open the profile in the browser |
 | `v` | Switch between the city and the classic grid |
+| `a` | Play a random animation now |
 | `g` / `G` | First / last repository |
 | `r` | Refresh |
 | `q` | Quit |
@@ -68,13 +84,17 @@ main.go ─▶ internal/github ─▶ one GraphQL request: profile, contribution
               │
               ▼
            internal/ui ─▶ skyline.go: the city (pure, deterministic)
+                          events.go:  animations, each a pure function of its frame
+                          canvas.go:  a grid of styled cells the city and animations draw into
                           render.go:  heatmap, bars, panels (pure, width-aware)
-                          model.go:   Bubble Tea model (loading, lights intro, keys, refresh)
+                          model.go:   Bubble Tea model (loading, lights intro, scheduling, keys)
 ```
 
 - **One request.** Everything comes from a single GraphQL query, so the dashboard loads in about a second.
 - **Width-aware layout.** Two columns from 100 columns up, one column below. The heatmap keeps GitHub's spacing while at least 40 weeks fit, and drops the gaps to show more history on narrow terminals. A test checks that no line is ever wider than the terminal.
 - **A stable city.** Which windows are lit, and the moment each one switches on during the intro, come from a hash of its position, so the same data always draws the same skyline.
+- **Animations as pure functions.** Each animation picks its details once (which rooftops, where in the sky), then draws any frame from just the frame number. That makes every frame testable: tests check, for example, that the hero never passes through a building and that nothing but the swinger draws inside one.
+- **No runaway timers.** Animation ticks carry a generation number that changes whenever the view does, so stale timers are ignored instead of stacking up.
 - **Pure rendering.** The drawing functions don't depend on Bubble Tea, so `--once` prints exactly what the interactive view shows, and the layout is unit-tested.
 
 ## Development
