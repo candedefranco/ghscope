@@ -30,7 +30,7 @@ func realCity() City { return NewCity(fakeUser(0).Contributions.Calendar, 106, m
 
 // towerCity has a skyscraper between two short buildings.
 func towerCity() City {
-	floors := []int{3, 3, 0, 0, maxFloors, 0, 0, 3, 3}
+	floors := []int{3, 3, 0, 0, maxFloors - 1, 0, 0, 3, 3}
 	city := City{Rows: skyRows + maxFloors, Cols: len(floors) * buildingW}
 	for _, f := range floors {
 		city.Buildings = append(city.Buildings, building{floors: f, litShare: 0.5})
@@ -106,13 +106,33 @@ func TestEventsDontDrawInsideBuildings(t *testing.T) {
 func TestHeroJumpsOverASkyscraper(t *testing.T) {
 	city := towerCity()
 	hero := heroArc(city, city.BuildingX(0), city.BuildingX(8), 1)
-	if hero.height < 4 {
-		t.Errorf("the arc should rise to clear the tower, height = %v", hero.height)
+	for f := heroStand; f < heroStand+hero.flight; f++ {
+		x, feet := hero.pos(city, f)
+		if top := feet - heroGliding[0].H() + 1; top < 0 {
+			t.Errorf("frame %d: the hero's head is off the top of the sky (row %d)", f, top)
+		}
+		for dx := -heroBody; dx <= heroBody; dx++ {
+			if feet >= 2*city.Roof(x+dx) {
+				t.Errorf("frame %d: the hero's body goes into a building at column %d", f, x+dx)
+			}
+		}
 	}
 	last := drawn(city, hero, hero.Frames()-1)
 	to := city.BuildingX(8)
-	if last[[2]int{to, city.Roof(to) - 2}] != 'o' {
+	if _, ok := last[[2]int{to - 1, city.Roof(to) - 1}]; !ok { // a foot
 		t.Errorf("the hero should end standing on the target roof, got %v", last)
+	}
+}
+
+// A tower too tall to clear without leaving the sky is flown behind.
+func TestHeroStaysInTheSky(t *testing.T) {
+	city := towerCity()
+	city.Buildings[4].floors = maxFloors + skyRows - 1
+	hero := heroArc(city, city.BuildingX(0), city.BuildingX(8), 1)
+	for f := heroStand; f < heroStand+hero.flight; f++ {
+		if _, feet := hero.pos(city, f); feet-heroGliding[0].H()+1 < 0 {
+			t.Fatalf("frame %d: the hero left the sky", f)
+		}
 	}
 }
 
@@ -136,6 +156,41 @@ func TestEventsNeedRoom(t *testing.T) {
 	}
 	if ev := NewEvent("dragon", realCity(), seeded(1)); ev != nil {
 		t.Error("unknown kinds should return nil")
+	}
+}
+
+func TestCanvasPixels(t *testing.T) {
+	cv := NewCanvas(3, 2)
+	cv.Pixel(0, 0, skin)     // top half only
+	cv.Pixel(1, 1, skin)     // bottom half only
+	cv.Pixel(2, 2, skin)     // top and bottom
+	cv.Pixel(2, 3, suitBlue) // of the same cell
+	cv.Pixel(0, -1, skin)    // out of bounds: ignored
+	cv.Pixel(0, 4, skin)
+	got := string([]rune{cv.At(0, 0), cv.At(1, 0), cv.At(2, 0), cv.At(2, 1), cv.At(0, 1)})
+	if got != "▀▄ ▀ " {
+		t.Errorf("cells = %q, want %q", got, "▀▄ ▀ ")
+	}
+}
+
+func TestSpritesAreRectangular(t *testing.T) {
+	sprites := []Sprite{heroStanding, heroCrouching, heroGliding[0], heroGliding[1], swingReach.Sprite, swingHang.Sprite}
+	for i, s := range sprites {
+		for _, row := range s.rows {
+			if len(row) != s.W() {
+				t.Errorf("sprite %d: row %q is %d wide, want %d", i, row, len(row), s.W())
+			}
+			for _, b := range []byte(row) {
+				if _, ok := s.palette[b]; !ok && b != '.' {
+					t.Errorf("sprite %d: %q is not in the palette", i, b)
+				}
+			}
+		}
+	}
+	for _, p := range []pose{swingReach, swingHang} {
+		if _, ok := p.palette[p.rows[0][p.hand]]; !ok {
+			t.Errorf("the swinger's hand (column %d) should be on its top row", p.hand)
+		}
 	}
 }
 

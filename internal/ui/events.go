@@ -21,9 +21,12 @@ var EventKinds = []string{"hero", "swinger", "shooting-star", "ufo", "fireworks"
 
 var (
 	skin        = lipgloss.Color("#f0c8a0")
+	heroSuit    = lipgloss.Color("#454e5e")
 	capeColor   = lipgloss.Color("#8957e5")
-	suitRed     = lipgloss.Color("#ff5f57")
-	suitBlue    = lipgloss.Color("#388bfd")
+	capeShade   = lipgloss.Color("#6e40c9")
+	beltColor   = lipgloss.Color("#e3b341")
+	suitRed     = lipgloss.Color("#e5534b")
+	suitBlue    = lipgloss.Color("#316dca")
 	webColor    = lipgloss.Color("#c9d1d9")
 	starWhite   = lipgloss.Color("#ffffff")
 	trailDim    = lipgloss.Color("#6e7681")
@@ -89,99 +92,221 @@ func rooftops(city City, minFloors int) []int {
 
 // ---------- Caped hero: jumps from one rooftop to another ----------
 
+var heroPalette = map[byte]color.Color{'k': heroSuit, 'c': capeColor, 'd': capeShade, 's': skin, 'y': beltColor, 'w': starWhite}
+
+var (
+	heroStanding = NewSprite(heroPalette,
+		".k...k.",
+		".kkkkk.",
+		".kwkwk.",
+		"..sss..",
+		"ckkkkkc",
+		"ckkkkkc",
+		"ckyyykc",
+		"cdkkkdc",
+		"cdk.kdc",
+		"cdk.kdc",
+	)
+	heroCrouching = NewSprite(heroPalette,
+		".k...k.",
+		".kkkkk.",
+		".kwkwk.",
+		"ckssskc",
+		"ckkkkkc",
+		"ckyyykc",
+		"cdkdkdc",
+		"dkd.dkd",
+	)
+	// In the air the cape opens like wings; two frames make its edge ripple.
+	heroGliding = [2]Sprite{
+		NewSprite(heroPalette,
+			"......k.k......",
+			"c.....kkk.....c",
+			"cc....wkw....cc",
+			"ccc...sss...ccc",
+			"cccc.kkkkk.cccc",
+			"cdccckkkkkcccdc",
+			"cddcckyyykccddc",
+			".d.dd.k.k.dd.d.",
+			"...d..k.k..d...",
+		),
+		NewSprite(heroPalette,
+			"......k.k......",
+			"c.....kkk.....c",
+			"cc....wkw....cc",
+			"ccc...sss...ccc",
+			"cccc.kkkkk.cccc",
+			"cdccckkkkkcccdc",
+			"cddcckyyykccddc",
+			"d.dd..k.k..dd.d",
+			"..d...k.k...d..",
+		),
+	}
+)
+
+const (
+	heroStand  = 8 // frames on a roof before the jump and after landing
+	heroCrouch = 2 // of those, frames crouched right before and after the flight
+	heroBody   = 1 // columns either side of the hero's center that must clear roofs
+)
+
 type heroJump struct {
-	from, to int // window columns of the two buildings
-	height   float64
+	from, to int     // window columns of the two buildings
+	height   float64 // how far the arc rises above the straight line, in pixels
 	flight   int
 }
 
-const heroStand = 8 // frames standing before the jump and after landing
+// feet returns the pixel row just above the roof at column x.
+func feet(city City, x int) int { return 2*city.Roof(x) - 1 }
 
-func newHeroJump(city City, rng *rand.Rand) Event {
-	roofs := rooftops(city, 3)
-	if len(roofs) < 2 {
-		return nil
-	}
-	a := roofs[rng.IntN(len(roofs))]
-	var candidates []int
-	for _, b := range roofs {
-		if d := abs(b - a); d >= 3 && d <= 18 {
-			candidates = append(candidates, b)
+// drawOn draws a sprite by its bottom center, hiding pixels that would land
+// inside a building, so a cape tucks in behind a wall instead of covering it.
+func drawOn(cv *Canvas, city City, s Sprite, x, feet int) {
+	s.Draw(cv, x-s.W()/2, feet-s.H()+1, func(x, py int) bool { return py < 2*city.Roof(x) })
+}
+
+// heroRoofs returns buildings low enough for the whole hero to fit under the
+// top of the sky. With clear set, only those without a taller neighbour that
+// would hide part of the hero.
+func heroRoofs(city City, clear bool) []int {
+	var out []int
+	for _, i := range rooftops(city, 2) {
+		x := city.BuildingX(i)
+		ok := 2*city.Roof(x) >= heroStanding.H()
+		for dx := -heroStanding.W() / 2; clear && dx <= heroStanding.W()/2; dx++ {
+			ok = ok && city.Roof(x+dx) >= city.Roof(x)
+		}
+		if ok {
+			out = append(out, i)
 		}
 	}
-	if len(candidates) == 0 {
-		return nil
+	return out
+}
+
+// newHeroJump picks two roofs a few buildings apart, preferring clear ones.
+func newHeroJump(city City, rng *rand.Rand) Event {
+	for _, roofs := range [][]int{heroRoofs(city, true), heroRoofs(city, false)} {
+		if len(roofs) < 2 {
+			continue
+		}
+		a := roofs[rng.IntN(len(roofs))]
+		var candidates []int
+		for _, b := range roofs {
+			if d := abs(b - a); d >= 4 && d <= 18 {
+				candidates = append(candidates, b)
+			}
+		}
+		if len(candidates) > 0 {
+			b := candidates[rng.IntN(len(candidates))]
+			return heroArc(city, city.BuildingX(a), city.BuildingX(b), 6+rng.Float64()*4)
+		}
 	}
-	b := candidates[rng.IntN(len(candidates))]
-	return heroArc(city, city.BuildingX(a), city.BuildingX(b), 3+rng.Float64()*2)
+	return nil
 }
 
 // heroArc plans a jump from one roof to another, raising the arc until the
-// hero and its trailing cape clear every building on the way.
+// hero's body clears every building on the way, but never so high that the
+// hero leaves the sky: a tower too tall to clear is flown behind instead. (The
+// tips of the cape may pass behind buildings too.)
 func heroArc(city City, from, to int, minHeight float64) *heroJump {
-	h := &heroJump{from: from, to: to, height: minHeight, flight: max(10, min(26, abs(to-from)))}
+	h := &heroJump{from: from, to: to, flight: max(10, min(26, abs(to-from)))}
+	need, ceiling := minHeight, math.Inf(1)
 	for f := range h.flight {
 		t := float64(f+1) / float64(h.flight)
-		x, base := h.path(city, t)
-		// Highest roof under the hero and the two cells of cape behind it
-		limit := city.Rows
-		for dx := -2; dx <= 2; dx++ {
+		bump := 4 * t * (1 - t)
+		if bump <= 0 {
+			continue
+		}
+		// The hero's feet are at base - height*bump.
+		x, base := h.line(city, t)
+		limit := city.Rows // highest roof under the hero's body
+		for dx := -heroBody; dx <= heroBody; dx++ {
 			limit = min(limit, city.Roof(x+dx))
 		}
-		if bump := 4 * t * (1 - t); bump > 0 {
-			// need base - height*bump <= limit - 1  →  height >= (base - limit + 1) / bump
-			h.height = max(h.height, (base-float64(limit)+1)/bump)
-		}
+		need = max(need, (base-float64(2*limit-1))/bump)                  // feet above that roof
+		ceiling = min(ceiling, (base-float64(heroGliding[0].H()-1))/bump) // head below the top
 	}
+	h.height = max(0, min(need, ceiling))
 	return h
 }
 
-// path returns the hero's column and its straight-line row (before the arc) at t.
-func (h *heroJump) path(city City, t float64) (int, float64) {
-	y0, y1 := float64(city.Roof(h.from)-2), float64(city.Roof(h.to)-2)
-	return int(math.Round(lerp(float64(h.from), float64(h.to), t))), lerp(y0, y1, t)
+// line returns the hero's column and feet row at t (0..1) on the straight
+// line between the two roofs; the arc lifts it above that.
+func (h *heroJump) line(city City, t float64) (int, float64) {
+	x := int(math.Round(lerp(float64(h.from), float64(h.to), t)))
+	return x, lerp(float64(feet(city, h.from)), float64(feet(city, h.to)), t)
+}
+
+// pos returns the hero's column and feet row at frame f of the flight.
+func (h *heroJump) pos(city City, f int) (x, feetY int) {
+	t := float64(f-heroStand+1) / float64(h.flight)
+	x, base := h.line(city, t)
+	return x, int(math.Floor(base - h.height*4*t*(1-t)))
 }
 
 func (h *heroJump) Name() string { return "hero" }
 func (h *heroJump) Frames() int  { return heroStand + h.flight + heroStand }
 
 func (h *heroJump) Draw(cv *Canvas, city City, f int) {
-	standAt := func(x int) {
-		roof := city.Roof(x)
-		cv.Set(x, roof-2, 'o', skin)
-		cv.Set(x, roof-1, '▲', capeColor)
-	}
+	land := heroStand + h.flight
 	switch {
+	case f < heroStand-heroCrouch:
+		drawOn(cv, city, heroStanding, h.from, feet(city, h.from))
 	case f < heroStand:
-		standAt(h.from)
-	case f < heroStand+h.flight:
-		t := float64(f-heroStand+1) / float64(h.flight)
-		x, base := h.path(city, t)
-		y := max(0, int(math.Floor(base-h.height*4*t*(1-t))))
-		dir := 1
-		if h.to < h.from {
-			dir = -1
-		}
-		cape := '='
-		if f%2 == 0 {
-			cape = '~'
-		}
-		cv.Set(x, y, 'o', skin)
-		for i := 1; i <= 2; i++ { // the cape trails behind, tucking in against walls
-			if cx := x - i*dir; y < city.Roof(cx) {
-				cv.Set(cx, y, cape, capeColor)
-			}
-		}
+		drawOn(cv, city, heroCrouching, h.from, feet(city, h.from))
+	case f < land:
+		x, y := h.pos(city, f)
+		drawOn(cv, city, heroGliding[f/2%2], x, y)
+	case f < land+heroCrouch:
+		drawOn(cv, city, heroCrouching, h.to, feet(city, h.to))
 	default:
-		standAt(h.to)
+		drawOn(cv, city, heroStanding, h.to, feet(city, h.to))
 	}
 }
 
 // ---------- Web swinger: swings across the city on lines ----------
 
+var swingerPalette = map[byte]color.Color{'r': suitRed, 'b': suitBlue, 'w': starWhite}
+
+// pose is a swinger sprite and the column of the hand holding the line, on
+// its top row.
+type pose struct {
+	Sprite
+	hand int
+}
+
+var (
+	// Reaching ahead for the anchor on the way down...
+	swingReach = pose{NewSprite(swingerPalette,
+		"........r.",
+		"..rrr..r..",
+		".rwrwr.r..",
+		".rwrwrr...",
+		"..rrrr....",
+		"..brrb....",
+		"..brrb....",
+		"..bbbb....",
+		".bb..bb...",
+		"rr....rr..",
+	), 8}
+	// ...and hanging under it on the way back up.
+	swingHang = pose{NewSprite(swingerPalette,
+		"......r...",
+		"..rrr.r...",
+		".rwrwrr...",
+		".rwrwrr...",
+		"..rrrr....",
+		"..brrb....",
+		"..brrb....",
+		"..bbbb....",
+		"..b..b....",
+		"..r..r....",
+	), 6}
+)
+
 type swinger struct {
 	anchors  []int // x of each anchor, left to right
-	low      int   // lowest row of the swing
+	top, low int   // pixel row of the hand at the ends and at the bottom of a swing
 	perSwing int
 }
 
@@ -192,10 +317,11 @@ func newSwinger(city City, rng *rand.Rand) Event {
 	for x := start; x+span < city.Cols && len(anchors) < 4; x += span {
 		anchors = append(anchors, x)
 	}
-	if len(anchors) < 2 {
+	top, low := 2, 2*city.Rows-swingReach.H()-2 // the feet stay above the street
+	if len(anchors) < 2 || low-top < 4 {
 		return nil
 	}
-	return &swinger{anchors: anchors, low: city.Rows - maxFloors/2 - 2, perSwing: 12}
+	return &swinger{anchors: anchors, top: top, low: low, perSwing: 12}
 }
 
 func (s *swinger) Name() string { return "swinger" }
@@ -205,27 +331,30 @@ func (s *swinger) Draw(cv *Canvas, city City, f int) {
 	seg := min(f/s.perSwing, len(s.anchors)-2)
 	t := float64(f-seg*s.perSwing) / float64(s.perSwing)
 	x0, x1 := float64(s.anchors[seg]), float64(s.anchors[seg+1])
-	top := float64(skyRows + 1)
-	// A pendulum: high at both ends, lowest in the middle under the anchor
+	// A pendulum: the hand is high at both ends, lowest in the middle under the anchor
 	x := int(math.Round(lerp(x0, x1, t)))
-	y := int(math.Round(top + (float64(s.low)-top)*4*t*(1-t)))
+	y := int(math.Round(lerp(float64(s.top), float64(s.low), 4*t*(1-t))))
 	ax := int(math.Round((x0 + x1) / 2))
-	line(cv, ax, 0, x, y-1, webColor)
-	cv.Set(x, y, 'o', suitRed)
-	cv.Set(x, y+1, 'x', suitBlue)
+	p := swingReach
+	if t >= 0.5 {
+		p = swingHang
+	}
+	line(cv, ax, 0, x, y/2-1, webColor) // down to the cell above the hand
+	p.Draw(cv, x-p.hand, y, nil)
 }
 
-// line draws a straight line with characters that follow its slope.
+// line draws a thin straight line with box-drawing characters that follow
+// its slope. (A line of pixels would be as thick as a whole column.)
 func line(cv *Canvas, x0, y0, x1, y1 int, fg color.Color) {
 	dx, dy := x1-x0, y1-y0
-	ch := '|'
+	ch := '│'
 	switch {
 	case abs(dy) < abs(dx)/3:
-		ch = '-'
+		ch = '─'
 	case abs(dx) >= abs(dy)/2 && (dx > 0) == (dy > 0):
-		ch = '\\'
+		ch = '╲'
 	case abs(dx) >= abs(dy)/2:
-		ch = '/'
+		ch = '╱'
 	}
 	steps := max(abs(dx), abs(dy))
 	for i := 0; i <= steps; i++ {

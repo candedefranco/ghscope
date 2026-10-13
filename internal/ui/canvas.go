@@ -10,6 +10,8 @@ import (
 type cell struct {
 	ch     rune
 	fg, bg color.Color // nil means the terminal default
+	// Pixels: each cell holds two, top and bottom, drawn with half blocks.
+	top, bot color.Color
 }
 
 // Canvas is a grid of styled cells. The skyline is drawn into it first and
@@ -48,6 +50,33 @@ func (c *Canvas) SetCell(x, y int, ch rune, fg, bg color.Color) {
 	c.cells[y*c.W+x] = cell{ch: ch, fg: fg, bg: bg}
 }
 
+// Pixel colors one of the two pixels in a cell: py counts half-rows, so the
+// canvas is W pixels wide and 2*H pixels tall. Used for sprites.
+func (c *Canvas) Pixel(x, py int, col color.Color) {
+	y := py / 2
+	if py < 0 || !c.In(x, y) {
+		return
+	}
+	if py%2 == 0 {
+		c.cells[y*c.W+x].top = col
+	} else {
+		c.cells[y*c.W+x].bot = col
+	}
+}
+
+// resolve turns a cell's pixels, if any, into a half-block character.
+func (cl cell) resolve() cell {
+	switch {
+	case cl.top != nil && cl.bot != nil:
+		return cell{ch: '▀', fg: cl.top, bg: cl.bot}
+	case cl.top != nil:
+		return cell{ch: '▀', fg: cl.top, bg: cl.bg}
+	case cl.bot != nil:
+		return cell{ch: '▄', fg: cl.bot, bg: cl.bg}
+	}
+	return cl
+}
+
 // Text draws a string left to right starting at (x, y).
 func (c *Canvas) Text(x, y int, s string, fg color.Color) {
 	for i, r := range []rune(s) {
@@ -62,7 +91,7 @@ func (c *Canvas) At(x, y int) rune {
 	if !c.In(x, y) {
 		return 0
 	}
-	return c.cells[y*c.W+x].ch
+	return c.cells[y*c.W+x].resolve().ch
 }
 
 func sameColor(a, b color.Color) bool {
@@ -79,7 +108,10 @@ func sameColor(a, b color.Color) bool {
 func (c *Canvas) Render() string {
 	var b strings.Builder
 	for y := range c.H {
-		row := c.cells[y*c.W : (y+1)*c.W]
+		row := make([]cell, c.W)
+		for x := range row {
+			row[x] = c.cells[y*c.W+x].resolve()
+		}
 		for x := 0; x < len(row); {
 			start := x
 			var run strings.Builder

@@ -21,11 +21,13 @@ Every few seconds something happens over the city, picked at random (never the s
 
 | | |
 |:--|:--|
-| 🦸 **Caped hero** | jumps from one rooftop to another, arcing over anything taller in between |
+| 🦸 **Caped hero** | crouches, leaps off a rooftop and glides to another with its cape spread like wings |
 | 🕸️ **Web swinger** | swings across the skyline from line to line |
 | 🌠 **Shooting star** | streaks across the sky and burns out against the buildings |
 | 🛸 **UFO** | crosses the sky and beams a building |
 | 🎆 **Fireworks** | go off over your best week |
+
+The hero and the swinger are pixel art: each character cell is split into two square pixels with half blocks (`▀` `▄`), which doubles the vertical resolution.
 
 Press `a` to play one right away, or start with `--no-anim` for a still city. Press `v` for GitHub's classic grid:
 
@@ -85,7 +87,8 @@ main.go ─▶ internal/github ─▶ one GraphQL request: profile, contribution
               ▼
            internal/ui ─▶ skyline.go: the city (pure, deterministic)
                           events.go:  animations, each a pure function of its frame
-                          canvas.go:  a grid of styled cells the city and animations draw into
+                          sprite.go:  pixel art drawn with half blocks
+                          canvas.go:  a grid of styled cells (and pixels) everything draws into
                           render.go:  heatmap, bars, panels (pure, width-aware)
                           model.go:   Bubble Tea model (loading, lights intro, scheduling, keys)
 ```
@@ -94,7 +97,7 @@ main.go ─▶ internal/github ─▶ one GraphQL request: profile, contribution
 - **Width-aware layout.** Two columns from 100 columns up, one column below. The heatmap keeps GitHub's spacing while at least 40 weeks fit, and drops the gaps to show more history on narrow terminals. A test checks that no line is ever wider than the terminal.
 - **Height-aware too.** In a short terminal the dashboard gives up room in order of what's missed least: a few rows of the repository list (it scrolls), some floors of the city, the blank lines between panels. In a wide terminal everything stays on screen down to about 30 rows.
 - **A stable city.** Which windows are lit, and the moment each one switches on during the intro, come from a hash of its position, so the same data always draws the same skyline.
-- **Animations as pure functions.** Each animation picks its details once (which rooftops, where in the sky), then draws any frame from just the frame number. That makes every frame testable: tests check, for example, that the hero never passes through a building and that nothing but the swinger draws inside one.
+- **Animations as pure functions.** Each animation picks its details once (which rooftops, where in the sky), then draws any frame from just the frame number. That makes every frame testable: tests check, for example, that the hero's arc clears a skyscraper without leaving the sky, and that nothing but the swinger draws inside a building (the hero's cape tucks in behind walls).
 - **No runaway timers.** Animation ticks carry a generation number that changes whenever the view does, so stale timers are ignored instead of stacking up.
 - **Pure rendering.** The drawing functions don't depend on Bubble Tea, so `--once` prints exactly what the interactive view shows, and the layout is unit-tested.
 
