@@ -102,33 +102,29 @@ var (
 		"ckskc",
 		"ckykc",
 		"dk.kd",
-		"dk.kd",
 	)
 	heroCrouching = NewSprite(heroPalette,
 		".k.k.",
 		".kkk.",
 		".wkw.",
-		"ckskc",
 		"ckykc",
 		"dkdkd",
 	)
 	// In the air the cape opens like wings; two frames make its edge ripple.
 	heroGliding = [2]Sprite{
 		NewSprite(heroPalette,
-			"....k.k....",
-			"c...kkk...c",
-			"cc..wkw..cc",
-			"cccckskcccc",
-			"cdcckykccdc",
-			"d.d.k.k.d.d",
+			"...k.k...",
+			"c..kkk..c",
+			"cc.wkw.cc",
+			"ccckykccc",
+			"d.dk.kd.d",
 		),
 		NewSprite(heroPalette,
-			"....k.k....",
-			"c...kkk...c",
-			"cc..wkw..cc",
-			"cccckskcccc",
-			"cdcckykccdc",
-			".d.dk.kd.d.",
+			"...k.k...",
+			"c..kkk..c",
+			"cc.wkw.cc",
+			"ccckykccc",
+			".d.k.k.d.",
 		),
 	}
 )
@@ -265,26 +261,29 @@ type pose struct {
 }
 
 var (
-	// Reaching ahead for the anchor on the way down...
+	// Reaching ahead for the anchor on the way down, the other arm and the
+	// legs flung out behind...
 	swingReach = pose{NewSprite(swingerPalette,
-		"......r",
-		".rrr.r.",
-		"rwrwrr.",
-		"rwrwr..",
-		".brb...",
-		".bbb...",
-		"b...b..",
-	), 6}
+		"........r",
+		"...rrr..r",
+		"...wrw.r.",
+		"...rrr.r.",
+		".rrbrbr..",
+		"...brb...",
+		"..bb.bb..",
+		".rr...rr.",
+	), 8}
 	// ...and hanging under it on the way back up.
 	swingHang = pose{NewSprite(swingerPalette,
-		"....r..",
-		".rrrr..",
-		"rwrwr..",
-		"rwrwr..",
-		".brb...",
-		".bbb...",
-		".b.b...",
-	), 4}
+		"......r.",
+		"..rrr.r.",
+		"..wrw.r.",
+		"..rrr.r.",
+		".rbrbr..",
+		"..brb...",
+		"..b.b...",
+		".rr.rr..",
+	), 6}
 )
 
 type swinger struct {
@@ -317,35 +316,35 @@ func (s *swinger) Draw(cv *Canvas, city City, f int) {
 	// A pendulum: the hand is high at both ends, lowest in the middle under the anchor
 	x := int(math.Round(lerp(x0, x1, t)))
 	y := int(math.Round(lerp(float64(s.top), float64(s.low), 4*t*(1-t))))
+	y -= y % 2 // the hand on a cell's top half, so the web can reach it
 	ax := int(math.Round((x0 + x1) / 2))
 	p := swingReach
 	if t >= 0.5 {
 		p = swingHang
 	}
-	line(cv, ax, 0, x, y/2-1, webColor) // down to the cell above the hand
+	thread(cv, 2*ax+1, 0, 2*x+1, 2*y-1, webColor)
 	p.Draw(cv, x-p.hand, y, nil)
 }
 
-// line draws a thin straight line with box-drawing characters that follow
-// its slope. (A line of pixels would be as thick as a whole column.)
-func line(cv *Canvas, x0, y0, x1, y1 int, fg color.Color) {
-	dx, dy := x1-x0, y1-y0
-	ch := '│'
-	switch {
-	case abs(dy) < abs(dx)/3:
-		ch = '─'
-	case abs(dx) >= abs(dy)/2 && (dx > 0) == (dy > 0):
-		ch = '╲'
-	case abs(dx) >= abs(dy)/2:
-		ch = '╱'
-	}
-	steps := max(abs(dx), abs(dy))
+// thread draws a fine line in braille dots, which split each cell into 2×4,
+// so it stays thin and continuous at any angle. Coordinates are in dots.
+func thread(cv *Canvas, x0, y0, x1, y1 int, fg color.Color) {
+	bits := [2][4]rune{{0x01, 0x02, 0x04, 0x40}, {0x08, 0x10, 0x20, 0x80}}
+	cells := map[[2]int]rune{}
+	steps := max(abs(x1-x0), abs(y1-y0))
 	for i := 0; i <= steps; i++ {
 		t := 0.0
 		if steps > 0 {
 			t = float64(i) / float64(steps)
 		}
-		cv.Set(int(math.Round(lerp(float64(x0), float64(x1), t))), int(math.Round(lerp(float64(y0), float64(y1), t))), ch, fg)
+		x := int(math.Round(lerp(float64(x0), float64(x1), t)))
+		y := int(math.Round(lerp(float64(y0), float64(y1), t)))
+		if x >= 0 && y >= 0 {
+			cells[[2]int{x / 2, y / 4}] |= bits[x%2][y%4]
+		}
+	}
+	for c, dots := range cells {
+		cv.Set(c[0], c[1], 0x2800+dots, fg)
 	}
 }
 

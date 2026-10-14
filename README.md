@@ -27,7 +27,7 @@ Every few seconds something happens over the city, picked at random (never the s
 | 🛸 **UFO** | crosses the sky and beams a building |
 | 🎆 **Fireworks** | go off over your best week |
 
-The hero and the swinger are pixel art: each character cell is split into two square pixels with half blocks (`▀` `▄`), which doubles the vertical resolution.
+The hero and the swinger are pixel art: each character cell is split into two square pixels with half blocks (`▀` `▄`), which doubles the vertical resolution. The web is finer still, a thread of braille dots (`⠁` to `⣿`, 2×4 per cell), so it stays thin at any angle.
 
 Press `a` to play one right away, or start with `--no-anim` for a still city. Press `v` for GitHub's classic grid:
 
